@@ -1,148 +1,290 @@
+const SHEET_URL =
+  "https://docs.google.com/spreadsheets/d/e/2PACX-1vR1TxEjxEEfjewjwUWLthwA4iU8IykBBk2QlMwcyV3xFurLMGJAfbj46xNN2yxeqRITQib3zxNQLbtn/pub?gid=1628993218&single=true&output=csv";
+
 let guests = [];
 let sheetReady = false;
-let pendingSearch = false;
+let sheetError = false;
 
-const CACHE_KEY = "wedding-table-guests-v1";
+const input = document.getElementById("guestName");
+const button = document.getElementById("findButton");
+const result = document.getElementById("result");
 
-function normalize(value) {
-  return String(value || "")
+function normalizeName(name) {
+  return String(name || "")
     .toLowerCase()
     .trim()
-    .replace(/\s+/g, " ")
-    .replace(/[.'’\-]/g, "");
+    .replace(/[.'’]/g, "")
+    .replace(/-/g, " ")
+    .replace(/\s+/g, " ");
 }
 
-function cellValue(cell) {
-  if (!cell || cell.v === null || cell.v === undefined) return "";
-  return String(cell.v).trim();
-}
+function parseCSV(text) {
+  const rows = [];
+  let row = [];
+  let value = "";
+  let insideQuotes = false;
 
-function loadCachedGuests() {
-  try {
-    const cached = JSON.parse(localStorage.getItem(CACHE_KEY));
-    if (Array.isArray(cached) && cached.length) {
-      guests = cached;
-      sheetReady = true;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    const next = text[i + 1];
+
+    if (char === '"' && insideQuotes && next === '"') {
+      value += '"';
+      i++;
+    } else if (char === '"') {
+      insideQuotes = !insideQuotes;
+    } else if (char === "," && !insideQuotes) {
+      row.push(value);
+      value = "";
+    } else if ((char === "\n" || char === "\r") && !insideQuotes) {
+      if (char === "\r" && next === "\n") {
+        i++;
+      }
+
+      row.push(value);
+
+      if (row.some(cell => cell.trim() !== "")) {
+        rows.push(row);
+      }
+
+      row = [];
+      value = "";
+    } else {
+      value += char;
     }
-  } catch (_) {}
+  }
+
+  row.push(value);
+
+  if (row.some(cell => cell.trim() !== "")) {
+    rows.push(row);
+  }
+
+  return rows;
 }
 
-loadCachedGuests();
-
-function sheetLoaded(response) {
+async function loadGuests() {
   try {
-    if (!response || response.status === "error" || !response.table) {
-      throw new Error("Google Sheet did not return usable data.");
+    const response = await fetch(
+      `${SHEET_URL}&refresh=${Date.now()}`,
+      { cache: "no-store" }
+    );
+
+    if (!response.ok) {
+      throw new Error("Could not load Google Sheet.");
     }
 
-    const headers = response.table.cols.map((column) =>
-      String(column.label || "").trim().toLowerCase()
+    const text = await response.text();
+    const rows = parseCSV(text);
+
+    if (rows.length === 0) {
+      throw new Error("Guest list is empty.");
+    }
+
+    const headers = rows[0].map(header =>
+      normalizeName(header)
     );
 
     const firstNameIndex = headers.indexOf("first name");
     const lastNameIndex = headers.indexOf("last name");
-    const tableNumberIndex = headers.indexOf("table number");
+    const tableIndex = headers.indexOf("table number");
+    const alternateNameIndex = headers.indexOf("alternate name");
+    const partyIdIndex = headers.indexOf("party id");
 
-    if (firstNameIndex === -1 || lastNameIndex === -1 || tableNumberIndex === -1) {
-      throw new Error("Expected columns were not found.");
+    if (
+      firstNameIndex === -1 ||
+      lastNameIndex === -1 ||
+      tableIndex === -1 ||
+      partyIdIndex === -1
+    ) {
+      throw new Error("Required columns were not found.");
     }
 
-    guests = response.table.rows
-      .map((row) => {
-        const cells = row.c || [];
+    guests = rows
+      .slice(1)
+      .map(row => {
+        const firstName =
+          (row[firstNameIndex] || "").trim();
+
+        const lastName =
+          (row[lastNameIndex] || "").trim();
+
+        const tableNumber =
+          (row[tableIndex] || "").trim();
+
+        const alternateName =
+          alternateNameIndex !== -1
+            ? (row[alternateNameIndex] || "").trim()
+            : "";
+
+        const partyId =
+          (row[partyIdIndex] || "").trim();
+
         return {
-          firstName: cellValue(cells[firstNameIndex]),
-          lastName: cellValue(cells[lastNameIndex]),
-          tableNumber: cellValue(cells[tableNumberIndex]),
+          firstName,
+          lastName,
+          tableNumber,
+          alternateName,
+          partyId,
+
+          fullNameNormalized:
+            normalizeName(`${firstName} ${lastName}`),
+
+          alternateNameNormalized:
+            normalizeName(alternateName)
         };
       })
-      .filter((guest) => guest.firstName || guest.lastName);
+      .filter(
+        guest =>
+          guest.firstName ||
+          guest.lastName
+      );
 
     sheetReady = true;
+    sheetError = false;
 
-    try {
-      localStorage.setItem(CACHE_KEY, JSON.stringify(guests));
-    } catch (_) {}
-
-    if (pendingSearch) {
-      pendingSearch = false;
-      findGuest();
-    }
+    console.log(`Loaded ${guests.length} guests.`);
   } catch (error) {
-    console.error(error);
-
-    if (!sheetReady) {
-      document.getElementById("result").innerHTML = `
-        <div class="error">
-          We’re having trouble loading the seating list.<br>
-          Please refresh and try again.
-        </div>
-      `;
-    }
+    console.error("Guest list failed to load:", error);
+    sheetError = true;
   }
 }
 
-function findGuest() {
-  const input = document.getElementById("guestName");
-  const result = document.getElementById("result");
-  const searchValue = normalize(input.value);
+function showTable(guest) {
+  const partyMembers = guests.filter(
+    person =>
+      person.partyId &&
+      person.partyId === guest.partyId
+  );
 
-  if (!searchValue) {
-    result.innerHTML = '<div class="error">Please enter your full name.</div>';
+  // If there is no usable Party ID, just show the searched guest
+  const members =
+    partyMembers.length > 0
+      ? partyMembers
+      : [guest];
+
+  const firstNames = members.map(
+    person => person.firstName
+  );
+
+  let namesText = "";
+
+  if (firstNames.length === 1) {
+    namesText = firstNames[0];
+  } else if (firstNames.length === 2) {
+    namesText = `${firstNames[0]} & ${firstNames[1]}`;
+  } else {
+    namesText =
+      firstNames.slice(0, -1).join(", ") +
+      " & " +
+      firstNames[firstNames.length - 1];
+  }
+
+  result.innerHTML = `
+    <div class="table-label">
+      ${namesText}
+    </div>
+
+    <div class="table-number">
+      Table ${guest.tableNumber}
+    </div>
+  `;
+}
+
+function findGuest() {
+  const enteredName = normalizeName(input.value);
+
+  result.className = "";
+
+  if (!enteredName) {
+    result.textContent =
+      "Please enter your first and last name.";
+
+    result.className = "message";
+    return;
+  }
+
+  if (!enteredName.includes(" ")) {
+    result.textContent =
+      "Please enter both your first and last name.";
+
+    result.className = "message";
+    return;
+  }
+
+  if (sheetError) {
+    result.textContent =
+      "We couldn't load the guest list. Please refresh the page and try again.";
+
+    result.className = "message";
     return;
   }
 
   if (!sheetReady) {
-    pendingSearch = true;
-    result.innerHTML = '<div class="status">Finding your table…</div>';
+    result.textContent =
+      "Finding your table…";
+
+    result.className = "message";
     return;
   }
 
-  const matches = guests.filter((guest) =>
-    normalize(`${guest.firstName} ${guest.lastName}`) === searchValue
+  const matches = guests.filter(
+    guest =>
+      guest.fullNameNormalized === enteredName ||
+      (
+        guest.alternateNameNormalized &&
+        guest.alternateNameNormalized === enteredName
+      )
   );
 
   if (matches.length === 1) {
     const guest = matches[0];
 
     if (!guest.tableNumber) {
-      result.innerHTML = `
-        <div class="error">
-          Your table assignment is not available yet.
-        </div>
-      `;
+      result.textContent =
+        "Your table assignment isn't available yet.";
+
+      result.className = "message";
       return;
     }
 
-    result.innerHTML = `
-      <div class="found-name">Welcome, ${guest.firstName}!</div>
-      <div class="table-label">Your table</div>
-      <div class="table-result">Table ${guest.tableNumber}</div>
-      <div class="welcome">We’re so happy you’re here.</div>
-    `;
+    showTable(guest);
     return;
   }
 
   if (matches.length > 1) {
-    result.innerHTML = `
-      <div class="error">
-        We found more than one guest with that exact name.<br>
-        Please ask us for help finding your table.
-      </div>
-    `;
+    const tableNumbers = [
+      ...new Set(
+        matches
+          .map(guest => guest.tableNumber)
+          .filter(Boolean)
+      )
+    ];
+
+    if (tableNumbers.length === 1) {
+      showTable(matches[0]);
+      return;
+    }
+
+    result.textContent =
+      "We found more than one guest with that name. Please enter the name exactly as it appears on your invitation.";
+
+    result.className = "message";
     return;
   }
 
-  result.innerHTML = `
-    <div class="error">
-      We couldn’t find that name.<br>
-      Please check the spelling and enter your full name.
-    </div>
-  `;
+  result.textContent =
+    "We couldn't find that name. Please check the spelling and enter your first and last name.";
+
+  result.className = "message";
 }
 
-document.getElementById("findButton").addEventListener("click", findGuest);
+button.addEventListener("click", findGuest);
 
-document.getElementById("guestName").addEventListener("keydown", (event) => {
-  if (event.key === "Enter") findGuest();
+input.addEventListener("keydown", event => {
+  if (event.key === "Enter") {
+    findGuest();
+  }
 });
+
+loadGuests();
