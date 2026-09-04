@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shreya & Danny — Find Your Table</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preconnect" href="https://docs.google.com">
+
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600&family=Playfair+Display:wght@500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+  <header>
+    <div class="brand">Shreya &amp; Danny</div>
+    <div class="date">September 19, 2026</div>
+  </header>
+
+  <main>
+    <section class="content">
+      <div class="ornament">✦ ◆ ✦</div>
+
+      <h1>Find Your Table</h1>
+      <p class="instructions">Enter your full name below to find your table.</p>
+
+      <div class="form">
+        <input
+          id="guestName"
+          type="text"
+          placeholder="Full name"
+          autocomplete="name"
+        >
+        <button id="findButton">FIND MY TABLE</button>
+      </div>
+
+      <div id="result"></div>
+    </section>
+  </main>
+
+  <script src="script.js"></script>
+
+  <script
+    async
+    src="https://docs.google.com/spreadsheets/d/e/2PACX-1vR1TxEjxEEfjewjwUWLthwA4iU8IykBBk2QlMwcyV3xFurLMGJAfbj46xNN2yxeqRITQib3zxNQLbtn/gviz/tq?gid=1628993218&amp;tqx=responseHandler:sheetLoaded">
+  </script>
+</body>
+</html>
